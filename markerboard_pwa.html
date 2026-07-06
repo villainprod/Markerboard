@@ -1,0 +1,669 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#F5F2EA">
+<title>Markerboard</title>
+<style>
+  :root {
+    --board:     #F5F2EA;
+    --board-alt: #EDE9DC;
+    --frame:     #D4C9B0;
+    --ink-0:     #1A1A2E;
+    --ink-1:     #1B4F8A;
+    --ink-2:     #1A6B3C;
+    --ink-3:     #8B1A1A;
+    --ink-4:     #4A1A6B;
+    --done-ink:  #B5AFA5;
+    --ui-dim:    rgba(26,26,46,0.38);
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body {
+    width: 100%; height: 100%;
+    background: var(--board);
+    overflow: hidden;
+    font-family: 'Courier New', Courier, monospace;
+    -webkit-user-select: none; user-select: none;
+    touch-action: none;
+  }
+
+  /* ── Board surface ── */
+  #board {
+    position: fixed; inset: 0;
+    background: var(--board);
+    overflow: hidden;
+  }
+
+  canvas#lines {
+    position: absolute; inset: 0;
+    width: 100%; height: 100%;
+    pointer-events: none;
+  }
+
+  /* ── Status bar ── */
+  #statusBar {
+    position: fixed; top: 0; left: 0; right: 0;
+    height: 36px;
+    display: flex; align-items: center; gap: 8px;
+    padding: 0 20px;
+    z-index: 10;
+    opacity: 0.5;
+    transition: opacity .3s;
+  }
+  #statusBar:hover { opacity: 1; }
+
+  #statusDot {
+    width: 9px; height: 9px; border-radius: 50%;
+    background: #aaa;
+    transition: background .5s;
+    flex-shrink: 0;
+  }
+  #statusDot.ok      { background: #1A6B3C; }
+  #statusDot.loading { background: #1B4F8A; animation: pulse 1.2s infinite; }
+  #statusDot.error   { background: #8B1A1A; }
+
+  @keyframes pulse {
+    0%,100% { opacity: 1; } 50% { opacity: 0.3; }
+  }
+
+  #statusText, #lastUpdated {
+    font-size: 10px; color: var(--ink-0);
+    letter-spacing: .03em;
+  }
+  #lastUpdated { margin-left: auto; }
+
+  /* ── Task scroll area ── */
+  #taskArea {
+    position: fixed;
+    top: 36px; bottom: 0; left: 0; right: 0;
+    overflow-y: auto; overflow-x: hidden;
+    padding: 16px 48px 48px 80px;
+    scroll-behavior: smooth;
+    -webkit-overflow-scrolling: touch;
+  }
+  #taskArea::-webkit-scrollbar { display: none; }
+
+  /* ── Task rows ── */
+  .task-row {
+    position: relative;
+    padding: 8px 0;
+    line-height: 1.35;
+    opacity: 0;
+    transform: translateX(-40px);
+    animation: slideIn .4s ease forwards;
+  }
+
+  @keyframes slideIn {
+    to { opacity: 1; transform: translateX(0); }
+  }
+
+  .task-text {
+    font-size: clamp(20px, 2.6vw, 32px);
+    color: var(--ink-0);
+    transition: opacity .6s ease;
+    display: block;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+
+  .task-row.done .task-text  { opacity: 0.35; }
+  .task-row.erasing          { transition: opacity 1.4s ease, transform 1.4s ease; opacity: 0 !important; transform: translateX(32px); }
+
+  /* ── SVG strike-through overlay ── */
+  .strike-svg {
+    position: absolute;
+    top: 0; left: 0;
+    width: 100%; height: 100%;
+    pointer-events: none;
+    overflow: visible;
+  }
+
+  .strike-path {
+    fill: none;
+    stroke: var(--done-ink);
+    stroke-width: 7;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+
+  .strike-path-wobble {
+    fill: none;
+    stroke: var(--done-ink);
+    stroke-width: 3.5;
+    stroke-linecap: round;
+    opacity: 0.45;
+  }
+
+  /* Draw-on animation via stroke-dasharray / dashoffset */
+  .strike-path, .strike-path-wobble {
+    stroke-dasharray: 2000;
+    stroke-dashoffset: 2000;
+    transition: none;
+  }
+
+  .strike-path.animate {
+    animation: drawStrike .65s cubic-bezier(.4,0,.2,1) forwards;
+  }
+  .strike-path-wobble.animate {
+    animation: drawStrike .65s cubic-bezier(.4,0,.2,1) .05s forwards;
+  }
+
+  @keyframes drawStrike {
+    to { stroke-dashoffset: 0; }
+  }
+
+  /* ── Empty state ── */
+  #emptyMsg {
+    position: fixed; inset: 0;
+    display: none;
+    align-items: center; justify-content: center;
+    font-size: 20px; color: var(--frame);
+    letter-spacing: .05em;
+    text-align: center;
+    padding: 40px;
+  }
+
+  /* ── Settings panel ── */
+  #settingsOverlay {
+    position: fixed; inset: 0;
+    background: rgba(28,28,28,.97);
+    z-index: 100;
+    display: none;
+    overflow-y: auto;
+    padding: 40px 5%;
+    animation: fadeIn .2s ease;
+  }
+  #settingsOverlay.open { display: block; }
+
+  @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+
+  #settingsOverlay h1 {
+    color: #eee; font-size: 18px; letter-spacing: .14em;
+    margin-bottom: 32px; font-weight: 500;
+  }
+
+  .field-group { margin-bottom: 22px; }
+  .field-group label {
+    display: block; color: #888; font-size: 11px;
+    letter-spacing: .05em; margin-bottom: 6px;
+  }
+  .field-group input {
+    width: 100%; padding: 11px 14px;
+    background: #3a3a3a; border: 1px solid #555;
+    border-radius: 4px; color: #eee;
+    font-family: 'Courier New', monospace; font-size: 13px;
+    outline: none;
+    transition: border-color .2s;
+  }
+  .field-group input:focus { border-color: #4a90d9; }
+
+  .cols-row { display: flex; gap: 16px; }
+  .cols-row .field-group { flex: 1; }
+
+  #saveBtn {
+    width: 100%; padding: 14px;
+    background: #1B4F8A; color: #F5F2EA;
+    border: none; border-radius: 4px;
+    font-family: 'Courier New', monospace; font-size: 14px;
+    letter-spacing: .07em; cursor: pointer;
+    margin-top: 8px; margin-bottom: 16px;
+    transition: background .2s;
+  }
+  #saveBtn:hover { background: #4a90d9; }
+
+  #connStatus {
+    text-align: center; font-size: 12px; color: #888;
+    min-height: 20px; margin-bottom: 32px;
+  }
+  #connStatus.ok   { color: #44aa66; }
+  #connStatus.fail { color: #cc4444; }
+
+  .setup-note {
+    font-size: 11px; color: #555; line-height: 1.7;
+    border-top: 1px solid #333; padding-top: 20px;
+  }
+
+  #closeSettings {
+    float: right; background: none; border: none;
+    color: #888; font-size: 22px; cursor: pointer;
+    line-height: 1; padding: 0 4px;
+  }
+  #closeSettings:hover { color: #eee; }
+
+  /* ── Hint ── */
+  #hint {
+    position: fixed; bottom: 14px; right: 18px;
+    font-size: 10px; color: var(--frame); opacity: .55;
+    pointer-events: none;
+    transition: opacity 2s;
+  }
+  #hint.hidden { opacity: 0; }
+</style>
+</head>
+<body>
+
+<div id="board">
+  <canvas id="lines"></canvas>
+</div>
+
+<div id="statusBar">
+  <div id="statusDot" class="loading"></div>
+  <span id="statusText">Connecting…</span>
+  <span id="lastUpdated"></span>
+</div>
+
+<div id="taskArea"></div>
+
+<div id="emptyMsg">No tasks yet —<br>add rows to your Google Sheet</div>
+
+<div id="hint">Hold 2 sec to open settings</div>
+
+<!-- Settings -->
+<div id="settingsOverlay">
+  <h1>⬜ MARKERBOARD <button id="closeSettings">✕</button></h1>
+
+  <div class="field-group">
+    <label>GOOGLE SHEET ID</label>
+    <input id="sSheetId" type="text" placeholder="Paste the long ID from your sheet URL">
+  </div>
+
+  <div class="field-group">
+    <label>GOOGLE API KEY</label>
+    <input id="sApiKey" type="password" placeholder="AIza…">
+  </div>
+
+  <div class="field-group">
+    <label>SHEET TAB NAME</label>
+    <input id="sSheetName" type="text" placeholder="Sheet1" value="Sheet1">
+  </div>
+
+  <div class="cols-row">
+    <div class="field-group">
+      <label>TASK COLUMN</label>
+      <input id="sTaskCol" type="text" placeholder="A" maxlength="2" value="A">
+    </div>
+    <div class="field-group">
+      <label>DONE COLUMN</label>
+      <input id="sDoneCol" type="text" placeholder="B" maxlength="2" value="B">
+    </div>
+  </div>
+
+  <div class="field-group">
+    <label>REFRESH EVERY (SECONDS)</label>
+    <input id="sRefresh" type="number" placeholder="30" value="30" min="5">
+  </div>
+
+  <button id="saveBtn">Save &amp; Connect</button>
+  <div id="connStatus"></div>
+
+  <div class="setup-note">
+    <strong style="color:#999">Sheet setup:</strong><br>
+    • Share your Google Sheet → "Anyone with the link" → Viewer<br>
+    • Enable Google Sheets API in Google Cloud Console<br>
+    • Create an API Key (restrict to Sheets API)<br>
+    • Column A = task text &nbsp;|&nbsp; Column B = TRUE or FALSE<br>
+    • First row can be a header (auto-skipped if it says "Task", "Item", etc.)
+  </div>
+</div>
+
+<script>
+// ── Config ──────────────────────────────────────────────────────────────────
+const CFG_KEY = 'markerboard_cfg_v1';
+
+function loadCfg() {
+  try { return JSON.parse(localStorage.getItem(CFG_KEY)) || {}; } catch { return {}; }
+}
+function saveCfg(c) { localStorage.setItem(CFG_KEY, JSON.stringify(c)); }
+
+let cfg = loadCfg();
+
+// ── Board ruled lines ────────────────────────────────────────────────────────
+(function drawBoardLines() {
+  const canvas = document.getElementById('lines');
+  function render() {
+    canvas.width  = window.innerWidth;
+    canvas.height = window.innerHeight;
+    const ctx = canvas.getContext('2d');
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    // Horizontal rules
+    ctx.strokeStyle = 'rgba(0,0,0,0.07)';
+    ctx.lineWidth = 1;
+    for (let y = 72; y < canvas.height; y += 72) {
+      ctx.beginPath();
+      ctx.moveTo(32, y); ctx.lineTo(canvas.width - 32, y);
+      ctx.stroke();
+    }
+    // Left margin
+    ctx.strokeStyle = 'rgba(0,0,0,0.05)';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(64, 0); ctx.lineTo(64, canvas.height);
+    ctx.stroke();
+  }
+  render();
+  window.addEventListener('resize', render);
+})();
+
+// ── State ────────────────────────────────────────────────────────────────────
+const INK = ['#1A1A2E','#1B4F8A','#1A6B3C','#8B1A1A','#4A1A6B'];
+let taskMap   = {};   // key → { text, done, el, colorIdx }
+let colorIdx  = 0;
+let colorAssign = {}; // key → colorIdx (stable across refreshes)
+let refreshTimer = null;
+
+// ── DOM refs ─────────────────────────────────────────────────────────────────
+const taskArea   = document.getElementById('taskArea');
+const emptyMsg   = document.getElementById('emptyMsg');
+const statusDot  = document.getElementById('statusDot');
+const statusText = document.getElementById('statusText');
+const lastUpd    = document.getElementById('lastUpdated');
+const hint       = document.getElementById('hint');
+
+// ── Settings UI ──────────────────────────────────────────────────────────────
+const overlay     = document.getElementById('settingsOverlay');
+const sSheetId    = document.getElementById('sSheetId');
+const sApiKey     = document.getElementById('sApiKey');
+const sSheetName  = document.getElementById('sSheetName');
+const sTaskCol    = document.getElementById('sTaskCol');
+const sDoneCol    = document.getElementById('sDoneCol');
+const sRefresh    = document.getElementById('sRefresh');
+const connStatus  = document.getElementById('connStatus');
+
+function openSettings() {
+  sSheetId.value   = cfg.sheetId   || '';
+  sApiKey.value    = cfg.apiKey    || '';
+  sSheetName.value = cfg.sheetName || 'Sheet1';
+  sTaskCol.value   = cfg.taskCol   || 'A';
+  sDoneCol.value   = cfg.doneCol   || 'B';
+  sRefresh.value   = cfg.refresh   || '30';
+  connStatus.textContent = '';
+  connStatus.className = '';
+  overlay.classList.add('open');
+}
+function closeSettings() { overlay.classList.remove('open'); }
+
+document.getElementById('closeSettings').addEventListener('click', closeSettings);
+
+document.getElementById('saveBtn').addEventListener('click', async () => {
+  cfg = {
+    sheetId:   sSheetId.value.trim(),
+    apiKey:    sApiKey.value.trim(),
+    sheetName: sSheetName.value.trim() || 'Sheet1',
+    taskCol:   sTaskCol.value.trim().toUpperCase() || 'A',
+    doneCol:   sDoneCol.value.trim().toUpperCase() || 'B',
+    refresh:   parseInt(sRefresh.value) || 30,
+  };
+  saveCfg(cfg);
+
+  connStatus.textContent = 'Testing connection…';
+  connStatus.className = '';
+
+  try {
+    const url = buildUrl(cfg);
+    const r = await fetch(url);
+    if (r.ok) {
+      connStatus.textContent = 'Connected to sheet ✓';
+      connStatus.className = 'ok';
+      setTimeout(() => {
+        closeSettings();
+        startRefresh();
+      }, 1000);
+    } else {
+      const body = await r.json().catch(() => ({}));
+      connStatus.textContent = `✗ HTTP ${r.status} — check Sheet ID, API key & sharing`;
+      connStatus.className = 'fail';
+    }
+  } catch (e) {
+    connStatus.textContent = '✗ Network error: ' + e.message;
+    connStatus.className = 'fail';
+  }
+});
+
+// ── Long-press to open settings ───────────────────────────────────────────────
+let pressTimer = null;
+document.body.addEventListener('touchstart', e => {
+  if (overlay.classList.contains('open')) return;
+  pressTimer = setTimeout(() => { openSettings(); }, 2000);
+});
+document.body.addEventListener('touchend',   () => clearTimeout(pressTimer));
+document.body.addEventListener('touchmove',  () => clearTimeout(pressTimer));
+document.body.addEventListener('mousedown',  e => {
+  if (overlay.classList.contains('open')) return;
+  pressTimer = setTimeout(() => { openSettings(); }, 2000);
+});
+document.body.addEventListener('mouseup',   () => clearTimeout(pressTimer));
+
+// ── API URL builder ──────────────────────────────────────────────────────────
+function buildUrl(c) {
+  const range = encodeURIComponent(`${c.sheetName}!${c.taskCol}:${c.doneCol}`);
+  return `https://sheets.googleapis.com/v4/spreadsheets/${c.sheetId}/values/${range}?key=${c.apiKey}`;
+}
+
+// ── Column letter → 0-index ──────────────────────────────────────────────────
+function colIdx(letter) {
+  if (!letter) return 0;
+  letter = letter.toUpperCase().trim();
+  let n = 0;
+  for (const ch of letter) n = n * 26 + (ch.charCodeAt(0) - 64);
+  return n - 1;
+}
+
+// ── Fetch & reconcile ────────────────────────────────────────────────────────
+async function fetchAndUpdate() {
+  if (!cfg.sheetId || !cfg.apiKey) {
+    setStatus('idle', 'Hold to configure');
+    return;
+  }
+
+  setStatus('loading', 'Syncing…');
+
+  try {
+    const resp = await fetch(buildUrl(cfg));
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const data = await resp.json();
+    const rows = parseRows(data);
+    reconcile(rows);
+    setStatus('ok', 'Live');
+    lastUpd.textContent = 'Updated ' + new Date().toLocaleTimeString([], {hour:'numeric',minute:'2-digit'});
+    hint.classList.add('hidden');
+  } catch (e) {
+    setStatus('error', 'Error: ' + e.message);
+  }
+}
+
+function parseRows(data) {
+  const values = data.values || [];
+  const taskC  = colIdx(cfg.taskCol);
+  const doneC  = colIdx(cfg.doneCol);
+  const rows   = [];
+
+  for (let i = 0; i < values.length; i++) {
+    const row = values[i];
+    const cell = (row[taskC] || '').trim();
+
+    // Skip obvious header rows
+    if (i === 0) {
+      const low = cell.toLowerCase();
+      if (['task','item','notes','description','todo'].includes(low)) continue;
+    }
+    if (!cell) continue;
+
+    const doneVal = (row[doneC] || '').trim().toUpperCase();
+    const done    = ['TRUE','1','YES','✓','DONE'].includes(doneVal);
+    rows.push({ key: 'r' + i, text: cell, done });
+  }
+  return rows;
+}
+
+function reconcile(newRows) {
+  const newKeys = new Set(newRows.map(r => r.key));
+
+  // Remove rows no longer in sheet
+  for (const key of Object.keys(taskMap)) {
+    if (!newKeys.has(key)) removeTask(key);
+  }
+
+  // Add / update
+  for (const row of newRows) {
+    if (!taskMap[row.key]) {
+      addTask(row);
+    } else {
+      updateTask(row);
+    }
+  }
+
+  const hasAny = Object.keys(taskMap).length > 0;
+  emptyMsg.style.display = hasAny ? 'none' : 'flex';
+}
+
+// ── Task rendering ────────────────────────────────────────────────────────────
+function addTask({ key, text, done }) {
+  if (!colorAssign[key]) {
+    colorAssign[key] = colorIdx % INK.length;
+    colorIdx++;
+  }
+  const cidx  = colorAssign[key];
+  const color = INK[cidx];
+
+  const row = document.createElement('div');
+  row.className = 'task-row';
+  row.dataset.key = key;
+  row.style.animationDelay = (Object.keys(taskMap).length * 60) + 'ms';
+
+  const span = document.createElement('span');
+  span.className = 'task-text';
+  span.textContent = text;
+  span.style.color = color;
+  row.appendChild(span);
+
+  // SVG strike overlay
+  const svg = document.createElementNS('http://www.w3.org/2000/svg','svg');
+  svg.setAttribute('class','strike-svg');
+  svg.setAttribute('preserveAspectRatio','none');
+
+  const path1 = document.createElementNS('http://www.w3.org/2000/svg','path');
+  path1.setAttribute('class','strike-path');
+  const path2 = document.createElementNS('http://www.w3.org/2000/svg','path');
+  path2.setAttribute('class','strike-path-wobble');
+
+  svg.appendChild(path1);
+  svg.appendChild(path2);
+  row.appendChild(svg);
+
+  taskArea.appendChild(row);
+  taskMap[key] = { text, done: false, el: row, svg, path1, path2, colorIdx: cidx };
+
+  if (done) {
+    // Appear already struck (no animation on initial load)
+    requestAnimationFrame(() => applyStrikeInstant(key));
+  }
+}
+
+function updateTask({ key, text, done }) {
+  const entry = taskMap[key];
+  if (!entry) return;
+  if (done && !entry.done) {
+    entry.done = true;
+    entry.el.classList.add('done');
+    requestAnimationFrame(() => animateStrike(key));
+  } else if (!done && entry.done) {
+    // Un-done edge case
+    entry.done = false;
+    entry.el.classList.remove('done');
+    entry.path1.classList.remove('animate');
+    entry.path2.classList.remove('animate');
+  }
+}
+
+function removeTask(key) {
+  const entry = taskMap[key];
+  if (!entry) return;
+  delete taskMap[key];
+
+  const delay = entry.done ? 4200 : 600;
+  setTimeout(() => {
+    entry.el.classList.add('erasing');
+    setTimeout(() => entry.el.remove(), 1600);
+  }, delay);
+}
+
+// Build SVG path once the element is sized
+function buildStrikePath(entry) {
+  const rect = entry.el.getBoundingClientRect();
+  const w    = rect.width;
+  const h    = rect.height;
+  const cy   = h / 2;
+  const sx   = 20, ex = w - 20;
+
+  // Main stroke (slightly wavy cubic)
+  const d1 = `M ${sx} ${cy - 2} C ${sx + (ex-sx)*.28} ${cy+5}, ${sx + (ex-sx)*.72} ${cy-4}, ${ex} ${cy+1}`;
+  // Wobble offset
+  const d2 = `M ${sx} ${cy + 4} C ${sx + (ex-sx)*.3} ${cy+8}, ${sx + (ex-sx)*.7} ${cy+1}, ${ex} ${cy+5}`;
+
+  entry.path1.setAttribute('d', d1);
+  entry.path2.setAttribute('d', d2);
+
+  // Set dasharray to actual path length
+  const len1 = entry.path1.getTotalLength ? entry.path1.getTotalLength() : 2000;
+  const len2 = entry.path2.getTotalLength ? entry.path2.getTotalLength() : 2000;
+  entry.path1.style.strokeDasharray = len1;
+  entry.path1.style.strokeDashoffset = len1;
+  entry.path2.style.strokeDasharray = len2;
+  entry.path2.style.strokeDashoffset = len2;
+}
+
+function animateStrike(key) {
+  const entry = taskMap[key];
+  if (!entry) return;
+  buildStrikePath(entry);
+  // Force reflow so the dashoffset starts at full length
+  void entry.path1.getBoundingClientRect();
+  entry.el.classList.add('done');
+  entry.path1.classList.add('animate');
+  entry.path2.classList.add('animate');
+}
+
+function applyStrikeInstant(key) {
+  const entry = taskMap[key];
+  if (!entry) return;
+  buildStrikePath(entry);
+  entry.done = true;
+  entry.el.classList.add('done');
+  // Skip animation — set dashoffset to 0 immediately
+  entry.path1.style.transition = 'none';
+  entry.path2.style.transition = 'none';
+  entry.path1.style.strokeDashoffset = 0;
+  entry.path2.style.strokeDashoffset = 0;
+}
+
+// ── Status ────────────────────────────────────────────────────────────────────
+function setStatus(state, msg) {
+  statusDot.className = state;
+  statusText.textContent = msg;
+}
+
+// ── Refresh loop ──────────────────────────────────────────────────────────────
+function startRefresh() {
+  if (refreshTimer) clearInterval(refreshTimer);
+  fetchAndUpdate();
+  const secs = Math.max(5, cfg.refresh || 30) * 1000;
+  refreshTimer = setInterval(fetchAndUpdate, secs);
+}
+
+// ── Boot ──────────────────────────────────────────────────────────────────────
+if (!cfg.sheetId || !cfg.apiKey) {
+  setStatus('idle', 'Hold to configure');
+  setTimeout(openSettings, 800);
+} else {
+  startRefresh();
+}
+</script>
+</body>
+</html>

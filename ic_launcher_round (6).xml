@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Markerboard</string>
+    <string name="settings_title">Markerboard Settings</string>
+    <string name="sheet_id_hint">Google Sheet ID</string>
+    <string name="sheet_id_label">Paste your Google Sheet ID</string>
+    <string name="api_key_hint">Google API Key</string>
+    <string name="api_key_label">Google Sheets API Key</string>
+    <string name="sheet_name_hint">Sheet Tab Name (e.g. Sheet1)</string>
+    <string name="task_col_hint">Task column letter (e.g. A)</string>
+    <string name="done_col_hint">Done column letter (e.g. B)</string>
+    <string name="save_button">Save &amp; Connect</string>
+    <string name="refresh_interval_label">Refresh every (seconds)</string>
+    <string name="connection_ok">Connected to sheet ✓</string>
+    <string name="connection_fail">Could not reach sheet</string>
+    <string name="no_tasks">No tasks yet — add rows to your Google Sheet</string>
+    <string name="tap_settings">Tap &amp; hold to open settings</string>
+</resources>

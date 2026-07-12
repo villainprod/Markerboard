@@ -1,0 +1,34 @@
+package com.markerboard;
+
+/**
+ * Represents a single row fetched from the Google Sheet.
+ */
+public class TaskItem {
+
+    public static final int STATE_ACTIVE    = 0;  // normal, on the board
+    public static final int STATE_STRIKING  = 1;  // animation: line drawing across
+    public static final int STATE_STRUCK    = 2;  // fully crossed out, fading
+    public static final int STATE_ERASING   = 3;  // fading out before removal
+    public static final int STATE_GONE      = 4;  // removed
+
+    public final String rowKey;   // unique row identifier (e.g. row index)
+    public final String text;
+    public final boolean done;
+    public int state;
+
+    /** Ink color index (0-4), assigned once and kept stable across refreshes */
+    public int colorIndex;
+
+    public TaskItem(String rowKey, String text, boolean done, int colorIndex) {
+        this.rowKey     = rowKey;
+        this.text       = text;
+        this.done       = done;
+        this.colorIndex = colorIndex;
+        this.state      = STATE_ACTIVE;
+    }
+
+    @Override
+    public String toString() {
+        return "TaskItem{key=" + rowKey + ", text=" + text + ", done=" + done + ", state=" + state + "}";
+    }
+}

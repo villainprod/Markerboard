@@ -1,0 +1,225 @@
+package com.markerboard;
+
+import android.content.Intent;
+import android.os.Build;
+import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
+import android.view.GestureDetector;
+import android.view.MotionEvent;
+import android.view.View;
+import android.view.WindowInsets;
+import android.view.WindowInsetsController;
+import android.view.WindowManager;
+import android.widget.LinearLayout;
+import android.widget.ScrollView;
+import android.widget.TextView;
+
+import androidx.appcompat.app.AppCompatActivity;
+import androidx.core.content.ContextCompat;
+
+import java.text.SimpleDateFormat;
+import java.util.ArrayList;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+
+public class MainActivity extends AppCompatActivity {
+
+    private static final long LONG_PRESS_MS = 2000;
+
+    private LinearLayout    taskContainer;
+    private ScrollView      taskScrollView;
+    private TextView        emptyText;
+    private TextView        statusText;
+    private View            statusDot;
+    private TextView        lastUpdatedText;
+    private TextView        hintText;
+
+    private SheetConfig       config;
+    private SheetFetcher      fetcher;
+    private TaskViewController taskViewController;
+
+    private final Handler     mainHandler = new Handler(Looper.getMainLooper());
+    private Runnable          refreshRunnable;
+    private GestureDetector   gestureDetector;
+
+    // Track previous task state to detect changes
+    private final Map<String, Boolean> lastDoneState = new HashMap<>();
+
+    @Override
+    protected void onCreate(Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+        goFullscreen();
+        setContentView(R.layout.activity_main);
+
+        taskContainer     = findViewById(R.id.taskContainer);
+        taskScrollView    = findViewById(R.id.taskScrollView);
+        emptyText         = findViewById(R.id.emptyText);
+        statusText        = findViewById(R.id.statusText);
+        statusDot         = findViewById(R.id.statusDot);
+        lastUpdatedText   = findViewById(R.id.lastUpdatedText);
+        hintText          = findViewById(R.id.hintText);
+
+        config  = SheetConfig.load(this);
+        fetcher = new SheetFetcher();
+        taskViewController = new TaskViewController(this, taskContainer);
+
+        setupLongPressGesture();
+
+        if (!config.isConfigured()) {
+            openSettings();
+        }
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        config = SheetConfig.load(this);
+        goFullscreen();
+        startRefreshLoop();
+    }
+
+    @Override
+    protected void onPause() {
+        super.onPause();
+        stopRefreshLoop();
+    }
+
+    // ─── Fullscreen ──────────────────────────────────────────────────────────
+
+    private void goFullscreen() {
+        getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            WindowInsetsController ctrl = getWindow().getInsetsController();
+            if (ctrl != null) {
+                ctrl.hide(WindowInsets.Type.statusBars() | WindowInsets.Type.navigationBars());
+                ctrl.setSystemBarsBehavior(
+                        WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
+            }
+        } else {
+            //noinspection deprecation
+            getWindow().getDecorView().setSystemUiVisibility(
+                    View.SYSTEM_UI_FLAG_FULLSCREEN
+                    | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                    | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+                    | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                    | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                    | View.SYSTEM_UI_FLAG_LAYOUT_STABLE);
+        }
+    }
+
+    // ─── Long-press → Settings ────────────────────────────────────────────────
+
+    private void setupLongPressGesture() {
+        gestureDetector = new GestureDetector(this, new GestureDetector.SimpleOnGestureListener() {
+            @Override
+            public void onLongPress(MotionEvent e) {
+                openSettings();
+            }
+        });
+
+        View root = findViewById(R.id.rootLayout);
+        root.setOnTouchListener((v, event) -> {
+            gestureDetector.onTouchEvent(event);
+            return true;
+        });
+    }
+
+    private void openSettings() {
+        startActivity(new Intent(this, SettingsActivity.class));
+    }
+
+    // ─── Refresh loop ─────────────────────────────────────────────────────────
+
+    private void startRefreshLoop() {
+        stopRefreshLoop();
+        refreshRunnable = new Runnable() {
+            @Override
+            public void run() {
+                fetchAndUpdate();
+                int interval = Math.max(10, config.refreshSeconds) * 1000;
+                mainHandler.postDelayed(this, interval);
+            }
+        };
+        mainHandler.post(refreshRunnable);
+    }
+
+    private void stopRefreshLoop() {
+        if (refreshRunnable != null) {
+            mainHandler.removeCallbacks(refreshRunnable);
+            refreshRunnable = null;
+        }
+    }
+
+    // ─── Data fetch & reconcile ───────────────────────────────────────────────
+
+    private void fetchAndUpdate() {
+        if (!config.isConfigured()) {
+            setStatus(StatusState.IDLE, "Not configured — hold to open settings");
+            return;
+        }
+
+        setStatus(StatusState.LOADING, "Syncing…");
+
+        fetcher.fetch(config, new SheetFetcher.FetchCallback() {
+            @Override
+            public void onSuccess(List<SheetFetcher.RawRow> rows) {
+                mainHandler.post(() -> handleRows(rows));
+            }
+
+            @Override
+            public void onError(String message) {
+                mainHandler.post(() -> {
+                    setStatus(StatusState.ERROR, "Error: " + message);
+                });
+            }
+        });
+    }
+
+    private void handleRows(List<SheetFetcher.RawRow> rows) {
+        setStatus(StatusState.OK, "Live");
+        updateLastUpdated();
+
+        List<TaskItem> items = new ArrayList<>();
+        for (SheetFetcher.RawRow row : rows) {
+            String key = "row_" + row.rowIndex;
+            TaskItem item = new TaskItem(key, row.taskText, row.done, 0);
+            items.add(item);
+        }
+
+        taskViewController.reconcile(items);
+
+        // Empty state
+        boolean hasAny = !items.isEmpty();
+        emptyText.setVisibility(hasAny ? View.GONE : View.VISIBLE);
+        taskScrollView.setVisibility(hasAny ? View.VISIBLE : View.GONE);
+
+        // Hide hint after first successful sync
+        hintText.animate().alpha(0f).setDuration(1000).setStartDelay(3000).start();
+    }
+
+    // ─── Status bar helpers ────────────────────────────────────────────────────
+
+    private enum StatusState { LOADING, OK, ERROR, IDLE }
+
+    private void setStatus(StatusState state, String message) {
+        statusText.setText(message);
+        int dotColor;
+        switch (state) {
+            case OK:      dotColor = ContextCompat.getColor(this, R.color.status_ok);      break;
+            case ERROR:   dotColor = ContextCompat.getColor(this, R.color.status_fail);    break;
+            case LOADING: dotColor = ContextCompat.getColor(this, R.color.status_loading); break;
+            default:      dotColor = ContextCompat.getColor(this, R.color.board_frame);    break;
+        }
+        statusDot.getBackground().setTint(dotColor);
+    }
+
+    private void updateLastUpdated() {
+        String time = new SimpleDateFormat("h:mm a", Locale.getDefault()).format(new Date());
+        lastUpdatedText.setText("Updated " + time);
+    }
+}

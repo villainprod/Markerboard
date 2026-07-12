@@ -1,0 +1,136 @@
+package com.markerboard;
+
+import android.os.Bundle;
+import android.text.TextUtils;
+import android.view.MenuItem;
+import android.widget.Button;
+import android.widget.EditText;
+import android.widget.TextView;
+import android.widget.Toast;
+
+import androidx.appcompat.app.AppCompatActivity;
+
+import java.io.IOException;
+import java.util.concurrent.TimeUnit;
+
+import okhttp3.Call;
+import okhttp3.Callback;
+import okhttp3.OkHttpClient;
+import okhttp3.Request;
+import okhttp3.Response;
+
+public class SettingsActivity extends AppCompatActivity {
+
+    private EditText sheetIdInput;
+    private EditText apiKeyInput;
+    private EditText sheetNameInput;
+    private EditText taskColInput;
+    private EditText doneColInput;
+    private EditText refreshIntervalInput;
+    private TextView connectionStatus;
+
+    @Override
+    protected void onCreate(Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+        setContentView(R.layout.activity_settings);
+
+        if (getSupportActionBar() != null) {
+            getSupportActionBar().setDisplayHomeAsUpEnabled(true);
+            getSupportActionBar().setTitle(R.string.settings_title);
+        }
+
+        sheetIdInput         = findViewById(R.id.sheetIdInput);
+        apiKeyInput          = findViewById(R.id.apiKeyInput);
+        sheetNameInput       = findViewById(R.id.sheetNameInput);
+        taskColInput         = findViewById(R.id.taskColInput);
+        doneColInput         = findViewById(R.id.doneColInput);
+        refreshIntervalInput = findViewById(R.id.refreshIntervalInput);
+        connectionStatus     = findViewById(R.id.connectionStatus);
+
+        Button saveButton = findViewById(R.id.saveButton);
+
+        // Pre-fill with saved values
+        SheetConfig saved = SheetConfig.load(this);
+        sheetIdInput.setText(saved.sheetId);
+        apiKeyInput.setText(saved.apiKey);
+        sheetNameInput.setText(saved.sheetName);
+        taskColInput.setText(saved.taskCol);
+        doneColInput.setText(saved.doneCol);
+        refreshIntervalInput.setText(String.valueOf(saved.refreshSeconds));
+
+        saveButton.setOnClickListener(v -> saveAndTest());
+    }
+
+    private void saveAndTest() {
+        String sheetId  = sheetIdInput.getText().toString().trim();
+        String apiKey   = apiKeyInput.getText().toString().trim();
+        String sheetName = sheetNameInput.getText().toString().trim();
+        String taskCol  = taskColInput.getText().toString().trim();
+        String doneCol  = doneColInput.getText().toString().trim();
+        String intervalStr = refreshIntervalInput.getText().toString().trim();
+
+        if (TextUtils.isEmpty(sheetId) || TextUtils.isEmpty(apiKey)) {
+            Toast.makeText(this, "Sheet ID and API Key are required", Toast.LENGTH_SHORT).show();
+            return;
+        }
+
+        SheetConfig config = new SheetConfig();
+        config.sheetId        = sheetId;
+        config.apiKey         = apiKey;
+        config.sheetName      = TextUtils.isEmpty(sheetName) ? "Sheet1" : sheetName;
+        config.taskCol        = TextUtils.isEmpty(taskCol) ? "A" : taskCol;
+        config.doneCol        = TextUtils.isEmpty(doneCol) ? "B" : doneCol;
+        config.refreshSeconds = TextUtils.isEmpty(intervalStr) ? 30 : Integer.parseInt(intervalStr);
+
+        config.save(this);
+
+        connectionStatus.setText("Testing connection…");
+        connectionStatus.setTextColor(0xFF888888);
+
+        testConnection(config);
+    }
+
+    private void testConnection(SheetConfig config) {
+        OkHttpClient client = new OkHttpClient.Builder()
+            .connectTimeout(8, TimeUnit.SECONDS)
+            .readTimeout(10, TimeUnit.SECONDS)
+            .build();
+
+        Request request = new Request.Builder().url(config.buildApiUrl()).build();
+
+        client.newCall(request).enqueue(new Callback() {
+            @Override
+            public void onFailure(Call call, IOException e) {
+                runOnUiThread(() -> {
+                    connectionStatus.setText("✗ " + e.getMessage());
+                    connectionStatus.setTextColor(0xFFCC4444);
+                });
+            }
+
+            @Override
+            public void onResponse(Call call, Response response) throws IOException {
+                boolean ok = response.isSuccessful();
+                runOnUiThread(() -> {
+                    if (ok) {
+                        connectionStatus.setText(getString(R.string.connection_ok));
+                        connectionStatus.setTextColor(0xFF44AA66);
+                        // Return to board after short delay
+                        connectionStatus.postDelayed(SettingsActivity.this::finish, 1200);
+                    } else {
+                        connectionStatus.setText("✗ HTTP " + response.code() + " — check Sheet ID, API key, and sharing settings");
+                        connectionStatus.setTextColor(0xFFCC4444);
+                    }
+                });
+            }
+        });
+    }
+
+    @Override
+    public boolean onOptionsItemSelected(MenuItem item) {
+        if (item.getItemId() == android.R.id.home) {
+            finish();
+            return true;
+        }
+        return super.onOptionsItemSelected(item);
+    }
+}

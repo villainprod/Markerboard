@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Whiteboard surface -->
+    <color name="board_bg">#F5F2EA</color>
+    <color name="board_bg_dark">#EDE9DC</color>
+
+    <!-- Marker ink colors — rotate through these for each task row -->
+    <color name="ink_black">#1A1A2E</color>
+    <color name="ink_blue">#1B4F8A</color>
+    <color name="ink_green">#1A6B3C</color>
+    <color name="ink_red">#8B1A1A</color>
+    <color name="ink_purple">#4A1A6B</color>
+
+    <!-- Strike-through / done color -->
+    <color name="ink_done">#B0A898</color>
+
+    <!-- UI chrome -->
+    <color name="board_frame">#D4C9B0</color>
+    <color name="settings_bg">#2C2C2C</color>
+    <color name="settings_text">#F0EDE5</color>
+    <color name="accent">#1B4F8A</color>
+    <color name="accent_light">#4A90D9</color>
+
+    <!-- Status indicator -->
+    <color name="status_ok">#1A6B3C</color>
+    <color name="status_fail">#8B1A1A</color>
+    <color name="status_loading">#1B4F8A</color>
+</resources>

@@ -1,0 +1,180 @@
+package com.markerboard;
+
+import android.animation.Animator;
+import android.animation.AnimatorListenerAdapter;
+import android.animation.ValueAnimator;
+import android.content.Context;
+import android.graphics.Typeface;
+import android.os.Handler;
+import android.os.Looper;
+import android.view.LayoutInflater;
+import android.view.View;
+import android.view.animation.AccelerateInterpolator;
+import android.widget.LinearLayout;
+import android.widget.TextView;
+
+import java.util.HashMap;
+import java.util.Map;
+
+/**
+ * Owns the mapping of TaskItem → inflated view, and drives all state transitions.
+ */
+public class TaskViewController {
+
+    /** ms to wait after strike completes before starting fade-out */
+    private static final long ERASE_DELAY_MS     = 4_000;
+    /** ms for the fade-out animation */
+    private static final long ERASE_DURATION_MS  = 1_500;
+
+    private static final int[] INK_COLORS = {
+        0xFF1A1A2E,  // near-black
+        0xFF1B4F8A,  // blue
+        0xFF1A6B3C,  // green
+        0xFF8B1A1A,  // red
+        0xFF4A1A6B   // purple
+    };
+
+    private final Context context;
+    private final LinearLayout container;
+    private final LayoutInflater inflater;
+    private final Handler mainHandler = new Handler(Looper.getMainLooper());
+
+    // rowKey → view
+    private final Map<String, View> viewMap = new HashMap<>();
+    // rowKey → color index (persistent across refreshes)
+    private final Map<String, Integer> colorMap = new HashMap<>();
+    private int colorCounter = 0;
+
+    public TaskViewController(Context context, LinearLayout container) {
+        this.context   = context;
+        this.container = container;
+        this.inflater  = LayoutInflater.from(context);
+    }
+
+    /**
+     * Main reconciliation method — call after every sheet refresh.
+     * newItems: the freshly fetched list from the sheet.
+     */
+    public void reconcile(java.util.List<TaskItem> newItems) {
+        // Build a map of new items for quick lookup
+        Map<String, TaskItem> newMap = new HashMap<>();
+        for (TaskItem item : newItems) {
+            newMap.put(item.rowKey, item);
+        }
+
+        // 1. Handle items that disappeared from the sheet entirely (row removed)
+        for (String key : new java.util.ArrayList<>(viewMap.keySet())) {
+            if (!newMap.containsKey(key)) {
+                eraseView(key);
+            }
+        }
+
+        // 2. Add new items / update existing
+        for (TaskItem item : newItems) {
+            if (!viewMap.containsKey(item.rowKey)) {
+                addView(item);
+            } else {
+                updateView(item);
+            }
+        }
+    }
+
+    private void addView(TaskItem item) {
+        // Assign color
+        if (!colorMap.containsKey(item.rowKey)) {
+            colorMap.put(item.rowKey, colorCounter % INK_COLORS.length);
+            colorCounter++;
+        }
+        int colorIdx = colorMap.get(item.rowKey);
+        int color    = INK_COLORS[colorIdx];
+
+        View rowView = inflater.inflate(R.layout.item_task, container, false);
+        TextView tv  = rowView.findViewById(R.id.taskText);
+        StrikeThroughView strikeView = rowView.findViewById(R.id.strikeView);
+
+        tv.setText(item.text);
+        tv.setTextColor(color);
+        tv.setTypeface(Typeface.MONOSPACE);
+
+        strikeView.setColor(color);
+
+        // Slide-in from left
+        rowView.setAlpha(0f);
+        rowView.setTranslationX(-60f);
+        container.addView(rowView);
+        rowView.animate()
+            .alpha(1f)
+            .translationX(0f)
+            .setDuration(400)
+            .start();
+
+        viewMap.put(item.rowKey, rowView);
+
+        if (item.done) {
+            // Already done on first appearance — skip animation, show struck
+            strikeView.setVisibility(View.VISIBLE);
+            tv.setAlpha(0.4f);
+        }
+    }
+
+    private void updateView(TaskItem item) {
+        View rowView = viewMap.get(item.rowKey);
+        if (rowView == null) return;
+
+        StrikeThroughView strikeView = rowView.findViewById(R.id.strikeView);
+        TextView tv = rowView.findViewById(R.id.taskText);
+
+        boolean alreadyStruck = (strikeView.getVisibility() == View.VISIBLE);
+
+        if (item.done && !alreadyStruck) {
+            // Transition: active → striking
+            strikeView.startStrikeAnimation(() -> {
+                // Strike complete — fade text
+                tv.animate().alpha(0.35f).setDuration(500).start();
+            });
+        } else if (!item.done && alreadyStruck) {
+            // Un-done (edge case — task was un-checked)
+            strikeView.setVisibility(View.GONE);
+            tv.setAlpha(1f);
+        }
+    }
+
+    /**
+     * Triggers the erase animation for a task that's been removed from the sheet.
+     */
+    private void eraseView(String rowKey) {
+        View rowView = viewMap.get(rowKey);
+        if (rowView == null) return;
+
+        StrikeThroughView strikeView = rowView.findViewById(R.id.strikeView);
+        boolean isStruck = (strikeView.getVisibility() == View.VISIBLE);
+
+        Runnable doErase = () -> {
+            rowView.animate()
+                .alpha(0f)
+                .translationX(40f)
+                .setDuration(ERASE_DURATION_MS)
+                .setInterpolator(new AccelerateInterpolator())
+                .setListener(new AnimatorListenerAdapter() {
+                    @Override
+                    public void onAnimationEnd(Animator animation) {
+                        container.removeView(rowView);
+                        viewMap.remove(rowKey);
+                        colorMap.remove(rowKey);
+                    }
+                })
+                .start();
+        };
+
+        if (isStruck) {
+            // Already crossed out — wait a bit then erase
+            mainHandler.postDelayed(doErase, ERASE_DELAY_MS);
+        } else {
+            // Not yet struck — immediate gentle fade
+            mainHandler.postDelayed(doErase, 800);
+        }
+
+        // Remove from our tracked map immediately so we don't double-process
+        viewMap.remove(rowKey);
+    }
+}

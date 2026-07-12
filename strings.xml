@@ -1,0 +1,161 @@
+package com.markerboard;
+
+import android.animation.ValueAnimator;
+import android.content.Context;
+import android.graphics.Canvas;
+import android.graphics.Paint;
+import android.graphics.Path;
+import android.graphics.PathMeasure;
+import android.util.AttributeSet;
+import android.view.View;
+import android.view.animation.DecelerateInterpolator;
+
+/**
+ * Renders an animated marker-drawn strike-through line across the parent view.
+ *
+ * Call startStrikeAnimation() to begin the draw-on animation.
+ * Call setAlpha() from outside to fade the line out when erasing.
+ */
+public class StrikeThroughView extends View {
+
+    public interface AnimationListener {
+        void onStrikeComplete();
+    }
+
+    private final Paint strikePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private Path      fullPath;
+    private Path      animatedPath = new Path();
+    private PathMeasure pathMeasure;
+    private float     progress = 0f;  // 0..1
+    private boolean   fullyDrawn = false;
+    private ValueAnimator animator;
+    private AnimationListener listener;
+
+    // Slightly wobbly marker look — two offset lines
+    private final Paint wobblePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+
+    public StrikeThroughView(Context context) {
+        super(context);
+        init();
+    }
+
+    public StrikeThroughView(Context context, AttributeSet attrs) {
+        super(context, attrs);
+        init();
+    }
+
+    public StrikeThroughView(Context context, AttributeSet attrs, int defStyleAttr) {
+        super(context, attrs, defStyleAttr);
+        init();
+    }
+
+    private void init() {
+        strikePaint.setStyle(Paint.Style.STROKE);
+        strikePaint.setStrokeCap(Paint.Cap.ROUND);
+        strikePaint.setStrokeJoin(Paint.Join.ROUND);
+        strikePaint.setStrokeWidth(8f);
+        strikePaint.setColor(0xFFB0A898);
+
+        wobblePaint.setStyle(Paint.Style.STROKE);
+        wobblePaint.setStrokeCap(Paint.Cap.ROUND);
+        wobblePaint.setStrokeWidth(4f);
+        wobblePaint.setColor(0x60B0A898);
+
+        setWillNotDraw(false);
+    }
+
+    public void setColor(int color) {
+        // Desaturate and lighten the ink color for the strike
+        strikePaint.setColor(blendToGray(color));
+        wobblePaint.setColor(blendToGray(color) & 0x60FFFFFF | (blendToGray(color) & 0x00FFFFFF));
+        invalidate();
+    }
+
+    private int blendToGray(int color) {
+        int r = (color >> 16) & 0xFF;
+        int g = (color >> 8)  & 0xFF;
+        int b = color & 0xFF;
+        int gray = (r + g + b) / 3;
+        r = (r + gray * 2) / 3;
+        g = (g + gray * 2) / 3;
+        b = (b + gray * 2) / 3;
+        return 0xFF000000 | (r << 16) | (g << 8) | b;
+    }
+
+    @Override
+    protected void onSizeChanged(int w, int h, int oldW, int oldH) {
+        super.onSizeChanged(w, h, oldW, oldH);
+        buildPath(w, h);
+    }
+
+    private void buildPath(int w, int h) {
+        float cy = h / 2f;
+        float startX = 20f;
+        float endX   = w - 20f;
+
+        // Slight natural wobble to mimic a real marker stroke
+        fullPath = new Path();
+        fullPath.moveTo(startX, cy - 2f);
+        fullPath.cubicTo(
+            startX + (endX - startX) * 0.25f, cy + 4f,
+            startX + (endX - startX) * 0.75f, cy - 3f,
+            endX, cy + 1f
+        );
+        pathMeasure = new PathMeasure(fullPath, false);
+
+        // Reset animation state when size changes
+        if (fullyDrawn) {
+            animatedPath.set(fullPath);
+        } else {
+            animatedPath.reset();
+            updateAnimatedPath();
+        }
+    }
+
+    private void updateAnimatedPath() {
+        if (pathMeasure == null) return;
+        animatedPath.reset();
+        pathMeasure.getSegment(0, pathMeasure.getLength() * progress, animatedPath, true);
+        // Force path to be non-empty for drawing
+        animatedPath.rLineTo(0, 0);
+    }
+
+    public void startStrikeAnimation(AnimationListener l) {
+        this.listener = l;
+        setVisibility(VISIBLE);
+        progress = 0f;
+        fullyDrawn = false;
+
+        if (animator != null) animator.cancel();
+        animator = ValueAnimator.ofFloat(0f, 1f);
+        animator.setDuration(600);
+        animator.setInterpolator(new DecelerateInterpolator());
+        animator.addUpdateListener(anim -> {
+            progress = (float) anim.getAnimatedValue();
+            updateAnimatedPath();
+            invalidate();
+        });
+        animator.addListener(new android.animation.AnimatorListenerAdapter() {
+            @Override
+            public void onAnimationEnd(android.animation.Animator animation) {
+                fullyDrawn = true;
+                if (listener != null) listener.onStrikeComplete();
+            }
+        });
+        animator.start();
+    }
+
+    @Override
+    protected void onDraw(Canvas canvas) {
+        super.onDraw(canvas);
+        if (animatedPath == null || animatedPath.isEmpty()) return;
+
+        canvas.drawPath(animatedPath, strikePaint);
+
+        // Offset wobble line for marker feel
+        canvas.save();
+        canvas.translate(0, 5f);
+        canvas.drawPath(animatedPath, wobblePaint);
+        canvas.restore();
+    }
+}

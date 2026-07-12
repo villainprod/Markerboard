@@ -106,13 +106,16 @@
     to { opacity: 1; transform: translateX(0); }
   }
 
-  .task-text {
-    font-size: clamp(20px, 2.6vw, 32px);
+.task-text {
+    font-size: clamp(22px, 2.8vw, 36px);
     color: var(--ink-0);
     transition: opacity .6s ease;
     display: block;
     white-space: pre-wrap;
     word-break: break-word;
+    font-family: 'Permanent Marker', cursive;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
   }
 
   .task-row.done .task-text  { opacity: 0.35; }
